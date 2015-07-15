@@ -175,6 +175,44 @@ object ${service.name} extends com.foursquare.spindle.ServiceDescriptor {
 #end
   }
 
+<%-- ServiceToProtocolClient adapter --%>\
+  class ServiceToProtocolClient(
+      service: com.twitter.finagle.Service[(org.apache.thrift.protocol.TMessage, org.apache.thrift.TBase[_, _], Boolean), org.apache.thrift.protocol.TProtocol]
+  ) extends #if (parentServiceName != "")${parentServiceName}.ServiceToProtocolClient(service) with ServiceIface #(else)ServiceIface#(end) {
+#for (function <- service.functions)
+
+    override <% render("service_funcsig.ssp", Map("function" -> function, "resolver" -> resolver,
+                  "wrapReturnTypeInFuture" -> true)) %> = {
+      try {
+        val message = new org.apache.thrift.protocol.TMessage("${function.name}", org.apache.thrift.protocol.TMessageType.CALL, 0)
+        val args = ${function.name}_args.createRawRecord
+#for (argument <- function.argz)
+        args.${argument.name}_=(${argument.name})
+#end
+
+        val request = (message, args, #if (function.oneWayOption.getOrElse(false))true#(else)false#(end))
+        val responseF = this.service.apply(request)
+        responseF.flatMap { __prot__ =>
+          try {
+#if (function.oneWayOption.getOrElse(false) || !function.returnTypeIdIsSet)
+#if (!function.oneWayOption.getOrElse(false))
+            (new Client(__prot__)).recv_${function.name}()
+#(end)
+            com.twitter.util.Future.value(null) <%-- Thrift compiler uses null. --%>
+#else
+            com.twitter.util.Future.value((new Client(__prot__)).recv_${function.name}())
+#end
+          } catch {
+            case e: Exception => com.twitter.util.Future.exception(e)
+          }
+        }
+      } catch {
+        case e: org.apache.thrift.TException => com.twitter.util.Future.exception(e)
+      }
+    }
+#end
+  }
+
 <%-- ServiceToClient adapter --%>\
   class ServiceToClient(
       service: com.twitter.finagle.Service[com.twitter.finagle.thrift.ThriftClientRequest, Array[Byte]],
